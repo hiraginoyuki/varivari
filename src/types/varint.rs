@@ -26,8 +26,9 @@ w5: impl Write
 w6: impl AsyncWrite
 */
 
-//! # macro_rules! _{( // bypass doctest
-//! Suppose we have all these:
+//! ```
+//! # macro_rules! _{( // bypass doctest for now
+//! // Suppose we have all these:
 //! const I32: i32 = 25565;
 //! const BIN: i32 = 0b0000_0000000_0000001_1000111_1011101;
 //! const ARR: [u8; 5] = [0b1101_1101, 0b1100_0111, 0b0000_0001, 0, 0];
@@ -53,7 +54,8 @@ w6: impl AsyncWrite
 //!
 //! // r4, w5: VarIntReadExt: Read; VarIntWriteExt: Write;
 //! // r5, w6: VarIntAsyncReadExt: AsyncRead; VarIntAsyncWriteExt: AsyncWrite;
-//! # )}=>{}}
+//! # )=>{}}
+//! ```
 
 //! MCMODERN's variable-length integers are fairly tricky to *properly* decode.
 
