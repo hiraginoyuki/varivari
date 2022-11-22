@@ -20,7 +20,7 @@ w6: impl AsyncWrite
 //! varivari aims to provide the most ergonomic APIs to handle [`VarInt`]s by making sure that the following conversions are always possible.
 //! ```
 #![doc = concat!("# use ", module_path!(), "::{VarInt, VarIntInner};")]
-//! # macro_rules! ascription {
+//! # macro_rules! ascribe {
 //! #     ($expr:expr => $ty:ty) => {{
 //! #         let tmp: $ty = $expr;
 //! #         tmp
@@ -47,8 +47,8 @@ w6: impl AsyncWrite
 //!
 //! // w3, w4: AsRef<[u8]>, AsRef<VarIntInner>
 //! let foo = VarInt::try_from(ARR.clone()).unwrap();
-//! assert_eq!(&ARR, ascription!( foo.as_ref() => &[u8] ));
-//! assert_eq!(&ARR[..3], ascription!( foo.as_ref() => &[u8] ));
+//! assert_eq!(&ARR, ascribe!( foo.as_ref() => &[u8] ));
+//! assert_eq!(&ARR[..3], ascribe!( foo.as_ref() => &[u8] ));
 //!
 //! // r4, w5: VarIntReadExt: Read; VarIntWriteExt: Write;
 //! // r5, w6: VarIntAsyncReadExt: AsyncRead; VarIntAsyncWriteExt: AsyncWrite;
