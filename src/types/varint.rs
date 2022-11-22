@@ -168,6 +168,7 @@ pub trait VarIntAsyncReadExt: AsyncRead {
         todo!()
     }
 }
+#[cfg(feature = "tokio")]
 impl<R: AsyncRead> VarIntAsyncReadExt for R {}
 
 // w1: VarInt -> i32
@@ -229,4 +230,5 @@ pub trait VarIntAsyncWriteExt: AsyncWrite {
         self.write_all(source.as_ref()).await
     }
 }
+#[cfg(feature = "tokio")]
 impl<W: AsyncWrite> VarIntAsyncWriteExt for W {}
