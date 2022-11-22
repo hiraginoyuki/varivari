@@ -57,6 +57,7 @@ w6: impl AsyncWrite
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use std::cmp;
 use std::io::{self, Read, Write};
 
 const MSB: u8 = 0b1000_0000;
@@ -64,8 +65,7 @@ const MSB: u8 = 0b1000_0000;
 pub enum VarIntFindResult<'a> {
     Tight(&'a [u8]),
     Loose(&'a [u8], usize),
-    TooFew,
-    TooMany,
+    Invalid,
 }
 
 pub type VarIntInner = [u8; VarInt::MAX_LEN];
@@ -78,10 +78,38 @@ impl VarInt {
     pub const MAX_LEN: usize = 5;
 
     #[inline]
-    fn find(slice: &[u8], size_hint: Option<usize>) -> VarIntFindResult {
+    fn find_loose(slice: &[u8]) -> Option<&[u8]> {
+        let (idx, _) = slice
+            .iter()
+            .enumerate()
+            .take(VarInt::MAX_LEN)
+            .find(|(_, &byte)| byte & MSB == MSB)?;
+
+        Some(&slice[..=idx])
+    }
+
+    #[inline]
+    fn find(slice: &[u8]) -> VarIntFindResult {
         use VarIntFindResult::*;
 
-        todo!()
+        let Some(slice) = VarInt::find_loose(slice) else {
+            return Invalid;
+        };
+
+        // SAFETY: `find_loose()` returns `None` and therefore `find()` returns `Invalid` at the above let-else, which makes it impossible for `silce` to be empty.
+        if unsafe { slice.last().unwrap_unchecked() } & !MSB != 0 {
+            return Tight(slice);
+        }
+
+        let Some((idx, _)) = slice
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, &byte)| byte & !MSB != 0) else {
+                return Invalid;
+            };
+
+        Loose(slice, idx + 1)
     }
 }
 
