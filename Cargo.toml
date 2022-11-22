@@ -12,6 +12,9 @@ keywords = ["no_std"]
 categories = ["encoding", "no-std"]
 publish = false
 
+[features]
+default = ["tokio"]
+
 [dependencies]
 async-trait = "~0.1"
-tokio = { version = "^1", features = ["io-util"] }
+tokio = { version = "^1", features = ["io-util"], optional = true }

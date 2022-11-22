@@ -55,6 +55,8 @@ w6: impl AsyncWrite
 //! ```
 
 use async_trait::async_trait;
+
+#[cfg(feature = "tokio")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use std::io::{self, Read, Write};
@@ -156,6 +158,7 @@ pub trait VarIntReadExt: Read {
 impl<R: Read> VarIntReadExt for R {}
 
 // r5: impl AsyncRead?
+#[cfg(feature = "tokio")]
 #[async_trait]
 pub trait VarIntAsyncReadExt: AsyncRead {
     async fn read_varint(&mut self) -> io::Result<VarInt>
@@ -216,6 +219,7 @@ pub trait VarIntWriteExt: Write {
 impl<W: Write> VarIntWriteExt for W {}
 
 // w6: impl AsyncWrite
+#[cfg(feature = "tokio")]
 #[async_trait]
 pub trait VarIntAsyncWriteExt: AsyncWrite {
     async fn write_varint(&mut self, source: &VarInt) -> io::Result<()>
