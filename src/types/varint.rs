@@ -1,15 +1,4 @@
 /*
-VarIntが正しくないケース一覧
-A: MSBが1のバイトが4つ以下あるが、その後ろにバイトが来ない (EOF | From<&[u8]>の場合, 回復不能)
-B: 5個目まで全てのバイトのMSBが1 (回復不能)
-C: 5個目のバイトの常に0の部分(-000 ---- の0)が1 (回復可能, 0埋め)
-D: 正しいVarIntシーケンスの後ろにまだバイトがある (回復可能, From<&[u8]>のみ?, 無視)
-
-Q1: AとBは区別されるべき?
-A1: Yes. AはTooLong的な側面があるのに対して, Bはそうではなく, バイトが足りないから起きるものであるので、区別されるべき。
-*/
-
-/*
 Design Philosophy (kinda)
 
 r1:     i32 -> VarInt
@@ -26,8 +15,17 @@ w5: impl Write
 w6: impl AsyncWrite
 */
 
+//! MCMODERN's variable-length integers are fairly tricky to *properly* decode.
+//!
+//! varivari aims to provide the most ergonomic APIs to handle [`VarInt`]s by making sure that the following conversions are always possible.
 //! ```
-//! # macro_rules! _{( // bypass doctest for now
+#![doc = concat!("# use ", module_path!(), "::{VarInt, VarIntInner};")]
+//! # macro_rules! ascr {
+//! #     ($expr:expr => $ty:ty) => {{
+//! #         let tmp: $ty = $expr;
+//! #         tmp
+//! #     }}
+//! # }
 //! // Suppose we have all these:
 //! const I32: i32 = 25565;
 //! const BIN: i32 = 0b0000_0000000_0000001_1000111_1011101;
@@ -49,15 +47,12 @@ w6: impl AsyncWrite
 //!
 //! // w3, w4: AsRef<[u8]>, AsRef<VarIntInner>
 //! let foo = VarInt::try_from(ARR.clone()).unwrap();
-//! assert_eq!(&ARR, foo.as_ref());
-//! assert_eq!(&ARR[..3], foo.as_ref());
+//! assert_eq!(&ARR, ascr!( foo.as_ref() => &[u8] ));
+//! assert_eq!(&ARR[..3], ascr!( foo.as_ref() => &[u8] ));
 //!
 //! // r4, w5: VarIntReadExt: Read; VarIntWriteExt: Write;
 //! // r5, w6: VarIntAsyncReadExt: AsyncRead; VarIntAsyncWriteExt: AsyncWrite;
-//! # )=>{}}
 //! ```
-
-//! MCMODERN's variable-length integers are fairly tricky to *properly* decode.
 
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -75,6 +70,7 @@ pub enum VarIntFindResult<'a> {
 
 pub type VarIntInner = [u8; VarInt::MAX_LEN];
 #[repr(transparent)]
+#[derive(Debug, Clone)]
 pub struct VarInt(VarIntInner);
 impl VarInt {
     // ideal but div_ceil() is unstable atm
