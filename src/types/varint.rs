@@ -60,9 +60,11 @@ w6: impl AsyncWrite
 //! MCMODERN's variable-length integers are fairly tricky to *properly* decode.
 
 use async_trait::async_trait;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use std::io::{self, Read, Write};
+
+const MSB: u8 = 0b1000_0000;
 
 pub enum VarIntFindResult<'a> {
     Tight(&'a [u8]),
@@ -75,6 +77,8 @@ pub type VarIntInner = [u8; VarInt::MAX_LEN];
 #[repr(transparent)]
 pub struct VarInt(VarIntInner);
 impl VarInt {
+    // ideal but div_ceil() is unstable atm
+    // pub const MAX_LEN: usize = i32::BITS.div_ceil(7) as usize;
     pub const MAX_LEN: usize = 5;
 
     #[inline]
@@ -87,8 +91,20 @@ impl VarInt {
 
 // r1:     i32 -> VarInt
 impl From<i32> for VarInt {
-    fn from(_: i32) -> Self {
-        todo!()
+    fn from(source: i32) -> Self {
+        let mut source = source as u32;
+        let mut buf = [0u8; Self::MAX_LEN];
+
+        for byte in buf.iter_mut() {
+            *byte = source as u8 & !MSB;
+            source >>= 7;
+            if source == 0 {
+                break;
+            }
+            *byte |= MSB
+        }
+
+        VarInt(buf)
     }
 }
 
@@ -130,8 +146,20 @@ impl<R: AsyncRead> VarIntAsyncReadExt for R {}
 
 // w1: VarInt -> i32
 impl From<VarInt> for i32 {
-    fn from(_: VarInt) -> Self {
-        todo!()
+    fn from(source: VarInt) -> Self {
+        // source
+        //     .0
+        //     .into_iter()
+        //     .enumerate()
+        //     .fold(0u32, |acc, (idx, byte)| acc | (byte as u32) << (idx * 7)) as Self
+
+        let mut result = 0u32;
+
+        for (idx, byte) in source.0.into_iter().enumerate() {
+            result |= (byte as u32) << (idx * 7);
+        }
+
+        result as Self
     }
 }
 
