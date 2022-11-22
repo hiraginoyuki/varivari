@@ -57,7 +57,6 @@ w6: impl AsyncWrite
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use std::cmp;
 use std::io::{self, Read, Write};
 
 const MSB: u8 = 0b1000_0000;
