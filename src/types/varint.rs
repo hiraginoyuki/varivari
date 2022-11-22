@@ -134,24 +134,28 @@ impl From<VarInt> for i32 {
         todo!()
     }
 }
+
 // w2: VarInt -> [u8; 5]
 impl From<VarInt> for VarIntInner {
     fn from(source: VarInt) -> Self {
         source.0
     }
 }
+
 // w3: VarInt ->&[u8; 5]
 impl AsRef<VarIntInner> for VarInt {
     fn as_ref(&self) -> &VarIntInner {
         &self.0
     }
 }
+
 // w4: VarInt ->&[u8]
 impl AsRef<[u8]> for VarInt {
     fn as_ref(&self) -> &[u8] {
         self.0.as_ref()
     }
 }
+
 // w5: impl Write
 pub trait VarIntWriteExt: Write {
     fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
@@ -159,6 +163,7 @@ pub trait VarIntWriteExt: Write {
     }
 }
 impl<W: Write> VarIntWriteExt for W {}
+
 // w6: impl AsyncWrite
 #[async_trait]
 pub trait VarIntAsyncWriteExt: AsyncWrite {
@@ -170,38 +175,3 @@ pub trait VarIntAsyncWriteExt: AsyncWrite {
     }
 }
 impl<W: AsyncWrite> VarIntAsyncWriteExt for W {}
-
-// Suppose we have a variable `data` whose type is `&[u8]`.
-// There are exactly 4 cases where `data` is not considered a valid VarInt/VarLong:
-// ```
-// for VarInt {
-//     const BITS = 32;
-//     const MAX_LEN: usize = 5;
-// }
-//
-// for VarLong {
-//     const BITS = 64;
-//     const MAX_LEN: usize = 10;
-// }
-//
-// fn is_A(data: &[u8]) -> bool {
-//     data.len() < MAX_LEN &&
-//     data.iter().all(|&byte| byte & 0b1000_0000 != 0)
-// }
-//
-// fn is_B(data: &[u8]) -> bool {
-//     MAX_LEN <= data.len() &&
-//     data[..MAX_LEN].iter().all(|&byte| byte & 0b1000_0000 != 0)
-// }
-//
-// fn is_C(data: &[u8]) -> bool {
-//     !is_A(data) &&
-//     !is_B(data) &&
-//     data[..MAX_LEN - 1].iter().all(|&byte| byte & 0b1000_0000 != 0) &&
-//     data[MAX_LEN - 1] & !(!0b1000_0000 & (0! << (BITS % 7))) == 0
-// }
-//
-// fn is_D(data: &[u8]) -> bool {
-//     !is_C(data) &&
-// }
-// ```
