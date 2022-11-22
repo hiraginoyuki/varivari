@@ -136,8 +136,8 @@ impl From<VarInt> for i32 {
 }
 // w2: VarInt -> [u8; 5]
 impl From<VarInt> for VarIntInner {
-    fn from(_: VarInt) -> Self {
-        todo!()
+    fn from(source: VarInt) -> Self {
+        source.0
     }
 }
 // w3: VarInt ->&[u8; 5]
