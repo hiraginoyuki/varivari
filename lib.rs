@@ -216,7 +216,8 @@ impl AsRef<[u8]> for VarInt {
 // w5: impl Write
 pub trait VarIntWriteExt: Write {
     fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
-        self.write_all(source.as_ref())
+        // self.write_all(source.as_ref())
+        todo!() // NO
     }
 }
 impl<W: Write> VarIntWriteExt for W {}
@@ -229,7 +230,8 @@ pub trait VarIntAsyncWriteExt: AsyncWrite {
     where
         Self: Unpin,
     {
-        self.write_all(source.as_ref()).await
+        // self.write_all(source.as_ref()).await
+        todo!() // ABSOLUTELY NOT
     }
 }
 #[cfg(feature = "tokio")]
