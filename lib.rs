@@ -59,6 +59,7 @@ use async_trait::async_trait;
 #[cfg(feature = "tokio")]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+use std::hint::unreachable_unchecked;
 use std::io::{self, Read, Write};
 
 const MSB: u8 = 0b1000_0000;
@@ -70,13 +71,24 @@ pub enum VarIntFindResult<'a> {
 }
 
 pub type VarIntInner = [u8; VarInt::MAX_LEN];
-#[repr(transparent)]
 #[derive(Debug, Clone)]
-pub struct VarInt(VarIntInner);
+pub struct VarInt {
+    inner: VarIntInner,
+    len: u8,
+}
+
 impl VarInt {
     // ideal but div_ceil() is unstable atm
     // pub const MAX_LEN: usize = i32::BITS.div_ceil(7) as usize;
     pub const MAX_LEN: usize = 5;
+    pub const LAST_BYTE_MASK: u8 = 0b0000_1111;
+
+    pub fn as_inner(&self) -> &VarIntInner {
+        &self.inner
+    }
+    pub fn into_inner(self) -> VarIntInner {
+        self.inner
+    }
 
     #[inline]
     fn find_loose(slice: &[u8]) -> Option<&[u8]> {
@@ -97,7 +109,9 @@ impl VarInt {
             return Invalid;
         };
 
-        // SAFETY: `find_loose()` returns `None` and therefore `find()` returns `Invalid` at the above let-else, which makes it impossible for `silce` to be empty.
+        // SAFETY: `find_loose()` returns `None` and therefore `find()` returns
+        // `Invalid` at the above let-else, which makes it impossible for
+        // `silce` to be empty.
         if unsafe { slice.last().unwrap_unchecked() } & !MSB != 0 {
             return Tight(slice);
         }
@@ -114,22 +128,28 @@ impl VarInt {
     }
 }
 
-// r1:     i32 -> VarInt
+// r1: i32 -> VarInt
 impl From<i32> for VarInt {
     fn from(source: i32) -> Self {
         let mut source = source as u32;
         let mut buf = [0u8; Self::MAX_LEN];
 
-        for byte in buf.iter_mut() {
+        for (idx, byte) in buf.iter_mut().enumerate() {
             *byte = source as u8 & !MSB;
             source >>= 7;
             if source == 0 {
-                break;
+                return VarInt {
+                    inner: buf,
+                    len: idx as u8 + 1,
+                };
             }
             *byte |= MSB
         }
 
-        VarInt(buf)
+        // SAFETY: `buf` always has 5 elements and the loop always breaks,
+        // because at 5th iteration, `source == 0` is the same as
+        // `(whatever_u32 >> 35) == 0` which is always true.
+        unsafe { unreachable_unchecked() }
     }
 }
 
@@ -141,7 +161,7 @@ impl TryFrom<VarIntInner> for VarInt {
     }
 }
 
-// r3:   &[u8] -> VarInt?
+// r3: &[u8] -> VarInt?
 impl TryFrom<&[u8]> for VarInt {
     type Error = ();
     fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
@@ -175,14 +195,14 @@ impl<R: AsyncRead> VarIntAsyncReadExt for R {}
 impl From<VarInt> for i32 {
     fn from(source: VarInt) -> Self {
         // source
-        //     .0
+        //     .inner
         //     .into_iter()
         //     .enumerate()
         //     .fold(0u32, |acc, (idx, byte)| acc | (byte as u32) << (idx * 7)) as Self
 
         let mut result = 0u32;
 
-        for (idx, byte) in source.0.into_iter().enumerate() {
+        for (idx, byte) in source.inner.into_iter().enumerate() {
             result |= (byte as u32) << (idx * 7);
         }
 
@@ -193,31 +213,28 @@ impl From<VarInt> for i32 {
 // w2: VarInt -> [u8; 5]
 impl From<VarInt> for VarIntInner {
     fn from(source: VarInt) -> Self {
-        source.0
+        source.inner
     }
 }
 
 // w3: VarInt ->&[u8; 5]
 impl AsRef<VarIntInner> for VarInt {
     fn as_ref(&self) -> &VarIntInner {
-        &self.0
+        &self.inner
     }
 }
 
 // w4: VarInt ->&[u8]
 impl AsRef<[u8]> for VarInt {
     fn as_ref(&self) -> &[u8] {
-        // self.0.as_ref()
-        // THIS IS NOT RIGHT.
-        todo!()
+        &self.inner[..self.len as usize]
     }
 }
 
 // w5: impl Write
 pub trait VarIntWriteExt: Write {
     fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
-        // self.write_all(source.as_ref())
-        todo!() // NO
+        self.write_all(source.as_ref())
     }
 }
 impl<W: Write> VarIntWriteExt for W {}
@@ -230,8 +247,7 @@ pub trait VarIntAsyncWriteExt: AsyncWrite {
     where
         Self: Unpin,
     {
-        // self.write_all(source.as_ref()).await
-        todo!() // ABSOLUTELY NOT
+        self.write_all(source.as_ref()).await
     }
 }
 #[cfg(feature = "tokio")]
