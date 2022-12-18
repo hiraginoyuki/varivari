@@ -303,8 +303,6 @@ impl AsRef<[u8]> for VarInt {
 pub use std_io::*;
 #[cfg(feature = "std")]
 mod std_io {
-    use cargo_toml_macros::crate_repository;
-
     use core::slice;
     use std::io::{self, Read, Write};
 
@@ -336,7 +334,7 @@ mod std_io {
                     // so unreachable_unchecked cannot be used here.
                     _ => unreachable!(concat!(
                         "This is a bug of ",
-                        crate_repository!(),
+                        env!("CARGO_PKG_REPOSITORY"),
                         ". Please create an issue to report it."
                     ))
                 }

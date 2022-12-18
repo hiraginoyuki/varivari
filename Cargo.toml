@@ -19,7 +19,6 @@ std = []
 
 [dependencies]
 async-trait = { version = "~0.1", optional = true }
-cargo-toml-macros = "~1.0.1"
 
 [dependencies.tokio]
 version = "1"
