@@ -59,8 +59,6 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use cargo_toml_macros::crate_repository;
-
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct TryFromVarIntSliceError(pub(crate) ());
 
@@ -74,7 +72,7 @@ pub(crate) const MSB: u8 = 0b1000_0000;
 
 use core::hint::unreachable_unchecked;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum VarIntFindResult<'a> {
     Tight(&'a [u8]),
     Loose(&'a [u8], usize),
@@ -305,10 +303,12 @@ impl AsRef<[u8]> for VarInt {
 pub use std_io::*;
 #[cfg(feature = "std")]
 mod std_io {
-    use super::{LooseVarInt, VarInt, VarIntFindResult::*, VarIntInner, MSB};
+    use cargo_toml_macros::crate_repository;
 
     use core::slice;
     use std::io::{self, Read, Write};
+
+    use super::{LooseVarInt, VarInt, VarIntFindResult::*, VarIntInner, MSB};
 
     // r4: impl Read?
     pub trait VarIntReadExt: Read {
@@ -378,10 +378,10 @@ pub use tokio_io::*;
 mod tokio_io {
     use async_trait::async_trait;
 
-    use super::VarInt;
-
     use std::io;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+    use super::VarInt;
 
     // w6: impl AsyncWrite
     #[async_trait]
