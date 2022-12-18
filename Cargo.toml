@@ -14,10 +14,17 @@ publish = false
 
 [features]
 default = ["tokio"]
+tokio = ["dep:tokio", "dep:async-trait", "std"]
+std = []
 
 [dependencies]
-async-trait = "~0.1"
-tokio = { version = "^1", features = ["io-util"], optional = true }
+async-trait = { version = "~0.1", optional = true }
+cargo-toml-macros = "~1.0.1"
+
+[dependencies.tokio]
+version = "1"
+features = ["io-util"]
+optional = true
 
 [lib]
 path = "./lib.rs"

@@ -1,22 +1,3 @@
-/*
-Design Philosophy (kinda)
-
-r1:     i32 -> VarInt
-r2: [u8; 5] -> VarInt?
-r3:   &[u8] -> VarInt?
-r4: impl Read?
-r5: impl AsyncRead?
-
-w1: VarInt -> i32
-w2: VarInt -> [u8; 5]
-w3: VarInt ->&[u8; 5]
-w4: VarInt ->&[u8]
-w5: impl Write
-w6: impl AsyncWrite
-*/
-
-//! MCMODERN's variable-length integers are fairly tricky to *properly* decode.
-//!
 //! varivari aims to provide the most ergonomic APIs to handle [`VarInt`]s by making sure that the following conversions are always possible.
 //! ```
 #![doc = concat!("# use ", module_path!(), "::{VarInt, VarIntInner};")]
@@ -26,48 +7,94 @@ w6: impl AsyncWrite
 //! #         tmp
 //! #     }}
 //! # }
-//! // Suppose we have all these:
+//! // The same value in different representations
 //! const I32: i32 = 25565;
+//! const U32: u32 = 25565;
 //! const BIN: i32 = 0b0000_0000000_0000001_1000111_1011101;
 //! const ARR: [u8; 5] = [0b1101_1101, 0b1100_0111, 0b0000_0001, 0, 0];
+//! let VARINT: VarInt = ARR.clone().try_into().unwrap();
 //! assert_eq!(I32, BIN);
+//! assert_eq!(&ARR, VARINT.as_inner());
 //!
-//! // r1, w1: seamlessly convert between VarInt and i32
-//! let foo = VarInt::from(I32);
-//! let bar = i32::from(foo);
-//! assert_eq!(I32, bar);
+//! { // between VarInt, i32 and u32
+//!     let foo = VarInt::from(I32);
+//!     let bar = i32::from(foo.clone());
+//!     let qux = u32::from(foo.clone());
+//!     assert_eq!(I32, bar);
+//!     assert_eq!(U32, qux);
+//! }
 //!
-//! // r2, r3, w2: extract or do a checked conversion from [u8; VarInt::MAX_LEN] (type-aliased as VarIntInner) or &[u8] to VarInt
-//! let foo = VarInt::try_from(ARR.clone()).unwrap();
-//! let bar = VarInt::try_from(&ARR[..3]).unwrap();
-//! let qux = VarIntInner::from(foo.clone());
-//! assert_eq!(BIN, i32::from(foo));
-//! assert_eq!(BIN, i32::from(bar));
-//! assert_eq!(ARR, qux);
+//! { // between array and silce, and VarInt
+//!     let foo = VarInt::try_from(ARR.clone()).unwrap();
+//!     let bar = VarInt::try_from(&ARR[..3]).unwrap();
+//!     let qux = VarIntInner::from(foo.clone());
+//!     assert_eq!(BIN, i32::from(foo));
+//!     assert_eq!(BIN, i32::from(bar));
+//!     assert_eq!(ARR, qux);
+//! }
 //!
-//! // w3, w4: AsRef<[u8]>, AsRef<VarIntInner>
-//! let foo = VarInt::try_from(ARR.clone()).unwrap();
-//! assert_eq!(&ARR, ascribe!( foo.as_ref() => &[u8] ));
-//! assert_eq!(&ARR[..3], ascribe!( foo.as_ref() => &[u8] ));
+//! { // AsRef<[u8]>, AsRef<VarIntInner>
+//!     let foo = VarInt::try_from(ARR.clone()).unwrap();
+//!     assert_eq!(&ARR,      foo.as_inner());
+//!     assert_eq!(&ARR[..3], foo.as_slice());
+//!     assert_eq!(&ARR,      ascribe!( foo.as_ref() => &VarIntInner ));
+//!     assert_eq!(&ARR[..3], ascribe!( foo.as_ref() => &[u8] ));
+//! }
 //!
-//! // r4, w5: VarIntReadExt: Read; VarIntWriteExt: Write;
-//! // r5, w6: VarIntAsyncReadExt: AsyncRead; VarIntAsyncWriteExt: AsyncWrite;
+//! { // trait VarIntReadExt: Read;
+//!   // trait VarIntWriteExt: Write;
+//!     use std::io::{Read, Write};
+#![doc = concat!("    use ", module_path!(), "::{VarIntReadExt, VarIntWriteExt};")]
+//!
+//!     // `&[u8]` implements `Read`
+//!     let foo = ARR.as_ref().read_varint().unwrap();
+//!     assert_eq!(ARR, foo.into_inner());
+//!
+//!     // `&mut [u8]` implements `Write`
+//!     let mut bar: VarIntInner = [0; 5];
+//!     bar.as_mut_slice().write_varint(&VARINT);
+//!     assert_eq!(ARR, bar);
+//! }
 //! ```
 
-use async_trait::async_trait;
+#![cfg_attr(not(feature = "std"), no_std)]
 
-#[cfg(feature = "tokio")]
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use cargo_toml_macros::crate_repository;
 
-use std::hint::unreachable_unchecked;
-use std::io::{self, Read, Write};
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TryFromVarIntSliceError(pub(crate) ());
 
-const MSB: u8 = 0b1000_0000;
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TryFromVarIntInnerError(pub(crate) ());
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct TryFromLooseSliceError(pub(crate) ());
+
+pub(crate) const MSB: u8 = 0b1000_0000;
+
+use core::hint::unreachable_unchecked;
+
+#[derive(Debug, Copy, Clone)]
 pub enum VarIntFindResult<'a> {
     Tight(&'a [u8]),
     Loose(&'a [u8], usize),
     Invalid,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct LooseVarInt<'a>(pub(crate) &'a [u8]);
+impl<'a> LooseVarInt<'a> {
+    pub fn into_inner(self) -> &'a [u8] {
+        self.0
+    }
+    pub fn as_inner(&'a self) -> &[u8] {
+        self.0
+    }
+}
+impl<'a> AsRef<[u8]> for LooseVarInt<'a> {
+    fn as_ref(&self) -> &[u8] {
+        self.0
+    }
 }
 
 pub type VarIntInner = [u8; VarInt::MAX_LEN];
@@ -82,56 +109,69 @@ impl VarInt {
     // pub const MAX_LEN: usize = i32::BITS.div_ceil(7) as usize;
     pub const MAX_LEN: usize = 5;
     pub const LAST_BYTE_MASK: u8 = 0b0000_1111;
+    pub const fn len(&self) -> usize {
+        self.len as usize
+    }
 
-    pub fn as_inner(&self) -> &VarIntInner {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.inner[..self.len() as usize]
+    }
+    pub const fn as_inner(&self) -> &VarIntInner {
         &self.inner
     }
-    pub fn into_inner(self) -> VarIntInner {
+    pub const fn into_inner(self) -> VarIntInner {
         self.inner
     }
 
     #[inline]
-    fn find_loose(slice: &[u8]) -> Option<&[u8]> {
+    fn find_loose(slice: &[u8]) -> Option<LooseVarInt> {
         let (idx, _) = slice
             .iter()
             .enumerate()
             .take(VarInt::MAX_LEN)
-            .find(|(_, &byte)| byte & MSB == MSB)?;
+            .find(|(_, &byte)| byte & MSB == 0)?;
 
-        Some(&slice[..=idx])
+        Some(LooseVarInt(&slice[..=idx]))
     }
 
     #[inline]
-    fn find(slice: &[u8]) -> VarIntFindResult {
+    fn find_from_loose<'a>(loose: LooseVarInt<'a>) -> VarIntFindResult<'a> {
         use VarIntFindResult::*;
 
-        let Some(slice) = VarInt::find_loose(slice) else {
-            return Invalid;
-        };
+        let slice = loose.as_ref();
 
         // SAFETY: `find_loose()` returns `None` and therefore `find()` returns
         // `Invalid` at the above let-else, which makes it impossible for
         // `silce` to be empty.
-        if unsafe { slice.last().unwrap_unchecked() } & !MSB != 0 {
-            return Tight(slice);
+        if slice.len() == 1 || unsafe { slice.last().unwrap_unchecked() } & !MSB != 0 {
+            return Tight(loose.0);
         }
 
         let Some((idx, _)) = slice
             .iter()
             .enumerate()
             .rev()
+            .skip(1)
             .find(|(_, &byte)| byte & !MSB != 0) else {
                 return Invalid;
             };
 
-        Loose(slice, idx + 1)
+        Loose(loose.0, idx + 1)
+    }
+
+    #[inline]
+    fn find(slice: &[u8]) -> VarIntFindResult {
+        let Some(slice) = VarInt::find_loose(slice) else {
+            return VarIntFindResult::Invalid;
+        };
+
+        VarInt::find_from_loose(slice)
     }
 }
 
 // r1: i32 -> VarInt
-impl From<i32> for VarInt {
-    fn from(source: i32) -> Self {
-        let mut source = source as u32;
+impl From<u32> for VarInt {
+    fn from(mut source: u32) -> Self {
         let mut buf = [0u8; Self::MAX_LEN];
 
         for (idx, byte) in buf.iter_mut().enumerate() {
@@ -152,61 +192,91 @@ impl From<i32> for VarInt {
         unsafe { unreachable_unchecked() }
     }
 }
+impl From<i32> for VarInt {
+    fn from(source: i32) -> Self {
+        (source as u32).into()
+    }
+}
 
 // r2: [u8; 5] -> VarInt?
 impl TryFrom<VarIntInner> for VarInt {
-    type Error = ();
-    fn try_from(_: VarIntInner) -> Result<Self, Self::Error> {
-        todo!()
+    type Error = TryFromVarIntInnerError;
+    fn try_from(mut source: VarIntInner) -> Result<Self, Self::Error> {
+        use VarIntFindResult::*;
+
+        let len = match VarInt::find(&source) {
+            Invalid => return Err(TryFromVarIntInnerError(())),
+            Tight(slice) => slice.len(),
+            Loose(_, actual_len) => {
+                source[actual_len - 1] &= !MSB;
+                actual_len
+            }
+        };
+
+        source[len..].fill(0);
+
+        Ok(VarInt {
+            inner: source,
+            len: len as u8,
+        })
     }
 }
 
 // r3: &[u8] -> VarInt?
 impl TryFrom<&[u8]> for VarInt {
-    type Error = ();
-    fn try_from(_: &[u8]) -> Result<Self, Self::Error> {
-        todo!()
+    type Error = TryFromVarIntSliceError;
+    fn try_from(source: &[u8]) -> Result<Self, Self::Error> {
+        use VarIntFindResult::*;
+
+        let mut buf: VarIntInner = [0; 5];
+
+        let len = match VarInt::find(&source) {
+            Invalid => return Err(TryFromVarIntSliceError(())),
+            Tight(slice) => slice.len(),
+            Loose(_, actual_len) => {
+                buf[actual_len - 1] &= !MSB;
+                actual_len
+            }
+        };
+
+        buf[..len].copy_from_slice(&source[..len]);
+
+        Ok(VarInt {
+            inner: buf,
+            len: len as u8,
+        })
     }
 }
 
-// r4: impl Read?
-pub trait VarIntReadExt: Read {
-    fn read_varint(&mut self) -> io::Result<VarInt> {
-        todo!()
-    }
-}
-impl<R: Read> VarIntReadExt for R {}
+// impl TryFrom<LooseVarInt<'_>> for VarInt {
+//     type Error = TryFromLooseSliceError;
+//     fn try_from(value: LooseVarInt) -> Result<Self, Self::Error> {
+//         use VarIntFindResult::*;
 
-// r5: impl AsyncRead?
-#[cfg(feature = "tokio")]
-#[async_trait]
-pub trait VarIntAsyncReadExt: AsyncRead {
-    async fn read_varint(&mut self) -> io::Result<VarInt>
-    where
-        Self: Unpin,
-    {
-        todo!()
-    }
-}
-#[cfg(feature = "tokio")]
-impl<R: AsyncRead> VarIntAsyncReadExt for R {}
+//         match VarInt::find_from_loose(value) {
+//             Tight(slice) =>
+//         }
+//     }
+// }
 
 // w1: VarInt -> i32
-impl From<VarInt> for i32 {
+impl From<VarInt> for u32 {
+    #[inline]
     fn from(source: VarInt) -> Self {
-        // source
-        //     .inner
-        //     .into_iter()
-        //     .enumerate()
-        //     .fold(0u32, |acc, (idx, byte)| acc | (byte as u32) << (idx * 7)) as Self
-
-        let mut result = 0u32;
+        let mut result = 0;
 
         for (idx, byte) in source.inner.into_iter().enumerate() {
             result |= (byte as u32) << (idx * 7);
         }
 
-        result as Self
+        result
+    }
+}
+
+impl From<VarInt> for i32 {
+    #[inline]
+    fn from(source: VarInt) -> Self {
+        u32::from(source) as Self
     }
 }
 
@@ -231,24 +301,97 @@ impl AsRef<[u8]> for VarInt {
     }
 }
 
-// w5: impl Write
-pub trait VarIntWriteExt: Write {
-    fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
-        self.write_all(source.as_ref())
-    }
-}
-impl<W: Write> VarIntWriteExt for W {}
+#[cfg(feature = "std")]
+pub use std_io::*;
+#[cfg(feature = "std")]
+mod std_io {
+    use super::{LooseVarInt, VarInt, VarIntFindResult::*, VarIntInner, MSB};
 
-// w6: impl AsyncWrite
-#[cfg(feature = "tokio")]
-#[async_trait]
-pub trait VarIntAsyncWriteExt: AsyncWrite {
-    async fn write_varint(&mut self, source: &VarInt) -> io::Result<()>
-    where
-        Self: Unpin,
-    {
-        self.write_all(source.as_ref()).await
+    use core::slice;
+    use std::io::{self, Read, Write};
+
+    // r4: impl Read?
+    pub trait VarIntReadExt: Read {
+        fn read_varint(&mut self) -> io::Result<VarInt> {
+            let mut buf: VarIntInner = [0; 5];
+
+            let mut len = 0;
+            for (idx, byte) in buf.iter_mut().enumerate() {
+                match self.read(slice::from_mut(byte))? {
+                    // hot path 🥵
+                    // breaks if continue bit is 0
+                    1 => {
+                        if *byte & MSB != MSB {
+                            len = idx + 1;
+                            break;
+                        }
+                    }
+
+                    // really cold path 🥶
+                    // handles unexpected EOF
+                    0 => return Err(io::ErrorKind::UnexpectedEof.into()),
+
+                    // super duper cold path 🧊
+                    // SAFETY: Read states that n <= buf.len() is not guaranteed,
+                    // so unreachable_unchecked cannot be used here.
+                    _ => unreachable!(concat!(
+                        "This is a bug of ",
+                        crate_repository!(),
+                        ". Please create an issue to report it."
+                    ))
+                }
+            }
+
+            if len == 0 {
+                return Err(io::ErrorKind::InvalidData.into());
+            }
+
+            match VarInt::find_from_loose(LooseVarInt(&buf[..len])) {
+                Tight(..) => {}
+                Loose(_, actual_len) => {
+                    buf[actual_len - 1] &= MSB;
+                    buf[actual_len..len].fill(0);
+                }
+                Invalid => return Err(io::ErrorKind::InvalidData.into()),
+            }
+
+            Ok(VarInt {
+                inner: buf,
+                len: len as u8,
+            })
+        }
     }
+    impl<R: Read> VarIntReadExt for R {}
+
+    // w5: impl Write
+    pub trait VarIntWriteExt: Write {
+        fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
+            self.write_all(source.as_ref())
+        }
+    }
+    impl<W: Write> VarIntWriteExt for W {}
 }
+
 #[cfg(feature = "tokio")]
-impl<W: AsyncWrite> VarIntAsyncWriteExt for W {}
+pub use tokio_io::*;
+#[cfg(feature = "tokio")]
+mod tokio_io {
+    use async_trait::async_trait;
+
+    use super::VarInt;
+
+    use std::io;
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+    // w6: impl AsyncWrite
+    #[async_trait]
+    pub trait VarIntAsyncWriteExt: AsyncWrite {
+        async fn write_varint(&mut self, source: &VarInt) -> io::Result<()>
+        where
+            Self: Unpin,
+        {
+            self.write_all(source.as_ref()).await
+        }
+    }
+    impl<W: AsyncWrite> VarIntAsyncWriteExt for W {}
+}
