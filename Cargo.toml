@@ -1,6 +1,6 @@
 [package]
 name = "varivari"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Yuki Hiragino <yuki@shiina.family>"]
 edition = "2021"
 # rust-version = "1.65.0" # Latest as of writing this file but I think very old versions are fine
