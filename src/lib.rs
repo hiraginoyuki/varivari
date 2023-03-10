@@ -59,7 +59,15 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+macro_rules! ignore {
+    ($($tt:tt)*) => {};
+}
+
+
 mod errors;
+pub mod io;
+pub mod nom;
+
 pub use errors::*;
 
 pub(crate) const MSB: u8 = 0b1000_0000;
@@ -70,17 +78,50 @@ use core::hint::unreachable_unchecked;
 pub enum VarIntFindResult<'a> {
     Tight(&'a [u8]),
     Loose(&'a [u8], usize),
-    Invalid,
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct LooseVarInt<'a>(pub(crate) &'a [u8]);
-impl<'a> LooseVarInt<'a> {
-    pub fn into_inner(self) -> &'a [u8] {
+pub struct LooseVarInt<'a>(&'a [u8]);
+impl LooseVarInt<'_> {
+    pub const fn inner(&self) -> &[u8] {
         self.0
     }
-    pub fn as_inner(&'a self) -> &[u8] {
-        self.0
+
+    /// # Safety
+    /// `slice.len()` must be contained in `1..=VarInt::MAX_LEN`.
+    pub unsafe fn from_unchecked(slice: &[u8]) -> LooseVarInt<'_> {
+        LooseVarInt(slice)
+    }
+
+    ignore! {
+        Tight(0_000_0000) = 0             // len == 1, looks loose but actually tight
+        Loose(1_000_0000, 0_000_0000) = 0 // obviously loose
+        Loose(1_000_0001, 0_000_0000) = 0b1_0000000
+        Tight(1_000_0001, 0_000_0001) = 0b1_0000001
+        Loose(1_000_0001, 1_000_0001, 0_000_0000) = 0b1_0000001_0000000
+        Tight(1_000_0001, 1_000_0001, 0_000_0001) = 0b1_0000001_0000001
+    }
+
+    pub fn to_varint(&self) -> VarInt {
+        let slice = self.0;
+        let inner: VarIntInner = [0; 5];
+
+        debug_assert!(slice.len() < VarInt::MAX_LEN);
+
+        if slice.len() == 1 || unsafe { slice.last().unwrap_unchecked() } & !MSB != 0 {
+            return VarInt { inner, len: slice.len() as u8 }
+        }
+
+        let len = slice
+            .iter()
+            .enumerate()
+            .rev()
+            .skip(1) // because it's checked above not to be tight
+            .find(|(_, &byte)| byte & !MSB != 0)
+            .map(|(idx, _)| idx + 1)
+            .unwrap_or(1); // not unwrap_unchecked because it might be 0 of any (0..=5) length
+
+        todo!()
     }
 }
 impl<'a> AsRef<[u8]> for LooseVarInt<'a> {
@@ -117,13 +158,14 @@ impl VarInt {
 
     #[inline]
     fn find_loose(slice: &[u8]) -> Option<LooseVarInt> {
-        let (idx, _) = slice
-            .iter()
-            .enumerate()
-            .take(VarInt::MAX_LEN)
-            .find(|(_, &byte)| byte & MSB == 0)?;
+        let (idx, _) = slice.iter().enumerate()
+            .take(VarInt::MAX_LEN) // None if MSB is in slice[VarInt::MAX_LEN..]
+            .find(|(_, &byte)| byte & MSB == 0)?; // None if MSB of the slice is [1, 1, 1, 1, 1]
 
-        Some(LooseVarInt(&slice[..=idx]))
+        Some(unsafe {
+            // SAFETY: `Iterator::take` and returning (by `?`) if the result is None ensures that `idx + 1` is contained in 1..=VarInt::MAX_LEN
+            LooseVarInt::from_unchecked(&slice[..=idx])
+        })
     }
 
     #[inline]
@@ -139,25 +181,21 @@ impl VarInt {
             return Tight(loose.0);
         }
 
-        let Some((idx, _)) = slice
+        let len = slice
             .iter()
             .enumerate()
             .rev()
-            .skip(1)
-            .find(|(_, &byte)| byte & !MSB != 0) else {
-                return Invalid;
-            };
+            .skip(1) // because it's checked above not to be tight
+            .find(|(_, &byte)| byte & !MSB != 0)
+            .map(|(idx, _)| idx + 1)
+            .unwrap_or(1); // not unwrap_unchecked because it might be 0 of any (1..=VarInt::MAX_LEN) length
 
-        Loose(loose.0, idx + 1)
+        Loose(loose.0, len)
     }
 
     #[inline]
-    fn find(slice: &[u8]) -> VarIntFindResult {
-        let Some(slice) = VarInt::find_loose(slice) else {
-            return VarIntFindResult::Invalid;
-        };
-
-        VarInt::find_from_loose(slice)
+    fn find(slice: &[u8]) -> Option<VarIntFindResult> {
+        VarInt::find_loose(slice).map(VarInt::find_from_loose)
     }
 }
 
@@ -197,9 +235,9 @@ impl TryFrom<VarIntInner> for VarInt {
         use VarIntFindResult::*;
 
         let len = match VarInt::find(&source) {
-            Invalid => return Err(TryFromVarIntInnerError(())),
-            Tight(slice) => slice.len(),
-            Loose(_, actual_len) => {
+            None => return Err(TryFromVarIntInnerError(())),
+            Some(Tight(slice)) => slice.len(),
+            Some(Loose(_, actual_len)) => {
                 source[actual_len - 1] &= !MSB;
                 actual_len
             }
@@ -223,9 +261,9 @@ impl TryFrom<&[u8]> for VarInt {
         let mut buf: VarIntInner = [0; 5];
 
         let len = match VarInt::find(&source) {
-            Invalid => return Err(TryFromVarIntSliceError(())),
-            Tight(slice) => slice.len(),
-            Loose(_, actual_len) => {
+            None => return Err(TryFromVarIntSliceError(())),
+            Some(Tight(slice)) => slice.len(),
+            Some(Loose(_, actual_len)) => {
                 buf[actual_len - 1] &= !MSB;
                 actual_len
             }
@@ -291,157 +329,4 @@ impl AsRef<[u8]> for VarInt {
     fn as_ref(&self) -> &[u8] {
         &self.inner[..self.len as usize]
     }
-}
-
-#[cfg(feature = "std")]
-pub use std_io::*;
-#[cfg(feature = "std")]
-mod std_io {
-    use core::slice;
-    use std::io::{self, Read, Write};
-
-    use super::{LooseVarInt, VarInt, VarIntFindResult::*, VarIntInner, MSB};
-
-    // r4: impl Read?
-    pub trait VarIntReadExt: Read {
-        fn read_varint(&mut self) -> io::Result<VarInt> {
-            let mut buf: VarIntInner = [0; 5];
-
-            let mut len = 0;
-            for (idx, byte) in buf.iter_mut().enumerate() {
-                match self.read(slice::from_mut(byte))? {
-                    // hot path 🥵
-                    // breaks if continue bit is 0
-                    1 => {
-                        if *byte & MSB != MSB {
-                            len = idx + 1;
-                            break;
-                        }
-                    }
-
-                    // really cold path 🥶
-                    // handles unexpected EOF
-                    0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-
-                    // super duper cold path 🧊
-                    // SAFETY: Read states that n <= buf.len() is not guaranteed,
-                    // so unreachable_unchecked cannot be used here.
-                    _ => unreachable!(concat!(
-                        "This is a bug of ",
-                        env!("CARGO_PKG_REPOSITORY"),
-                        ". Please create an issue to report it."
-                    ))
-                }
-            }
-
-            if len == 0 {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-
-            match VarInt::find_from_loose(LooseVarInt(&buf[..len])) {
-                Tight(..) => {}
-                Loose(_, actual_len) => {
-                    buf[actual_len - 1] &= MSB;
-                    buf[actual_len..len].fill(0);
-                }
-                Invalid => return Err(io::ErrorKind::InvalidData.into()),
-            }
-
-            Ok(VarInt {
-                inner: buf,
-                len: len as u8,
-            })
-        }
-    }
-    impl<R: Read> VarIntReadExt for R {}
-
-    // w5: impl Write
-    pub trait VarIntWriteExt: Write {
-        fn write_varint(&mut self, source: &VarInt) -> io::Result<()> {
-            self.write_all(source.as_ref())
-        }
-    }
-    impl<W: Write> VarIntWriteExt for W {}
-}
-
-#[cfg(feature = "tokio")]
-pub use tokio_io::*;
-#[cfg(feature = "tokio")]
-mod tokio_io {
-    use async_trait::async_trait;
-    use core::slice;
-
-    use std::io;
-    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-
-    use super::{LooseVarInt, VarInt, VarIntFindResult::*, VarIntInner, MSB};
-
-    // r4: impl Read?
-    #[async_trait]
-    pub trait VarIntAsyncReadExt: AsyncRead {
-        async fn read_varint(&mut self) -> io::Result<VarInt>
-        where
-            Self: Unpin,
-        {
-            let mut buf: VarIntInner = [0; 5];
-
-            let mut len = 0;
-            for (idx, byte) in buf.iter_mut().enumerate() {
-                match self.read(slice::from_mut(byte)).await? {
-                    // hot path 🥵
-                    // breaks if continue bit is 0
-                    1 => {
-                        if *byte & MSB != MSB {
-                            len = idx + 1;
-                            break;
-                        }
-                    }
-
-                    // really cold path 🥶
-                    // handles unexpected EOF
-                    0 => return Err(io::ErrorKind::UnexpectedEof.into()),
-
-                    // super duper cold path 🧊
-                    // SAFETY: Read states that n <= buf.len() is not guaranteed,
-                    // so unreachable_unchecked cannot be used here.
-                    _ => unreachable!(concat!(
-                        "This is a bug of ",
-                        env!("CARGO_PKG_REPOSITORY"),
-                        ". Please create an issue to report it."
-                    ))
-                }
-            }
-
-            if len == 0 {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-
-            match VarInt::find_from_loose(LooseVarInt(&buf[..len])) {
-                Tight(..) => {}
-                Loose(_, actual_len) => {
-                    buf[actual_len - 1] &= MSB;
-                    buf[actual_len..len].fill(0);
-                }
-                Invalid => return Err(io::ErrorKind::InvalidData.into()),
-            }
-
-            Ok(VarInt {
-                inner: buf,
-                len: len as u8,
-            })
-        }
-    }
-    impl<R: AsyncRead> VarIntAsyncReadExt for R {}
-
-    // w6: impl AsyncWrite
-    #[async_trait]
-    pub trait VarIntAsyncWriteExt: AsyncWrite {
-        async fn write_varint(&mut self, source: &VarInt) -> io::Result<()>
-        where
-            Self: Unpin,
-        {
-            self.write_all(source.as_ref()).await
-        }
-    }
-    impl<W: AsyncWrite> VarIntAsyncWriteExt for W {}
 }

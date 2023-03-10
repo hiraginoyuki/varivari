@@ -19,6 +19,7 @@ std = []
 
 [dependencies]
 async-trait = { version = "~0.1", optional = true }
+nom = "7"
 
 [dependencies.tokio]
 version = "1"
