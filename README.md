@@ -9,7 +9,7 @@ We now have to decide whether to fork the crate and tailor it for Minecraft's `V
 But that detail doesn't matter for the purpose of deciding where to put this crate. Just so you know, though, this crate is no longer actively maintained and has been discontinued.
 
 <details>
-<summary>(the previous content of README.md)</summary>
+<summary>(previous content of README.md)</summary>
 
 # varivari
 A simple MCMODERN VarInt/VarLong decoder/encoder.
